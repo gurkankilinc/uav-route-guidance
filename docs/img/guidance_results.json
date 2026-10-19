@@ -1,0 +1,323 @@
+{
+ "offset": {
+  "speeds": {
+   "12": {
+    "first_roll_cmd_deg": -11.797968758181213,
+    "settle_1m_s": 7.68,
+    "overshoot_m": 0.3812336457372776,
+    "max_actual_roll_deg": 8.895288971464192
+   },
+   "20": {
+    "first_roll_cmd_deg": -11.797968758181213,
+    "settle_1m_s": 7.68,
+    "overshoot_m": 0.37808757965031503,
+    "max_actual_roll_deg": 8.861820246909428
+   },
+   "26": {
+    "first_roll_cmd_deg": -11.797968758181213,
+    "settle_1m_s": 7.68,
+    "overshoot_m": 0.3773806792330662,
+    "max_actual_roll_deg": 8.854312482079447
+   }
+  },
+  "analytic_15m_deg": -11.797968758181213,
+  "analytic_5m_deg": -3.982770050943745
+ },
+ "crosswind": {
+  "est": {
+   "steady_mean_m": -0.040256500898572925,
+   "steady_rms_m": 0.25786435074249736,
+   "max_abs_m": 6.724388575805047,
+   "roll_std_deg": 0.24694072236755332,
+   "roll_cmd_std_deg": 1.1810654526149136
+  },
+  "air": {
+   "steady_mean_m": 20.28863068963143,
+   "steady_rms_m": 20.288751113746734,
+   "max_abs_m": 20.984552656547706,
+   "roll_std_deg": 0.20313738440785403,
+   "roll_cmd_std_deg": 1.208250154085263
+  },
+  "gnss": {
+   "steady_mean_m": 0.009281148926842698,
+   "steady_rms_m": 0.30878891804750797,
+   "max_abs_m": 6.695264714216992,
+   "roll_std_deg": 0.8038090310402832,
+   "roll_cmd_std_deg": 1.6676732455131784
+  },
+  "true": {
+   "steady_mean_m": -7.877377916361207e-09,
+   "steady_rms_m": 3.070608095300918e-08,
+   "max_abs_m": 6.763425229800296,
+   "roll_std_deg": 1.2409042454876762e-08,
+   "roll_cmd_std_deg": 1.0861438590970503e-08
+  },
+  "predicted_air_only_m": 20.292255244216655,
+  "seeds": 10
+ },
+ "estimator": {
+  "err_at_1s": 0.7392817277801405,
+  "err_mean_10_60s": 0.06625879399796342,
+  "sigma_steady": 0.12475414166036725,
+  "recover_to_0_5_after_change_s": 16.60000000000001,
+  "err_mean_90_120s": 0.16552305748247462
+ },
+ "routes": {
+  "astar_dp": {
+   "points": 10,
+   "planned_clearance_m": 9.117644289680008,
+   "runs": [
+    {
+     "wind_from": null,
+     "finished": true,
+     "time_s": 38.18,
+     "min_clearance_m": -0.3305258015412953,
+     "worst_at": [
+      306.91810744062917,
+      338.7068474837958
+     ],
+     "max_route_dev_m": 17.558891281669485,
+     "max_roll_deg": 33.089619231348856
+    },
+    {
+     "wind_from": 0,
+     "finished": true,
+     "time_s": 46.660000000000004,
+     "min_clearance_m": 1.8658237550744907,
+     "worst_at": [
+      304.20698145183934,
+      337.5161612684245
+     ],
+     "max_route_dev_m": 12.979206044288789,
+     "max_roll_deg": 29.47806377373404
+    },
+    {
+     "wind_from": 45,
+     "finished": true,
+     "time_s": 50.04,
+     "min_clearance_m": 2.1890424791420706,
+     "worst_at": [
+      303.92280657816735,
+      337.69571401319723
+     ],
+     "max_route_dev_m": 10.630407203632942,
+     "max_roll_deg": 24.94750929714809
+    },
+    {
+     "wind_from": 90,
+     "finished": true,
+     "time_s": 46.68,
+     "min_clearance_m": 1.127190890760538,
+     "worst_at": [
+      305.2331761236083,
+      338.32072947030696
+     ],
+     "max_route_dev_m": 10.667241456383984,
+     "max_roll_deg": 25.58614533567304
+    },
+    {
+     "wind_from": 135,
+     "finished": true,
+     "time_s": 39.4,
+     "min_clearance_m": -0.5433875674003374,
+     "worst_at": [
+      307.2606391953505,
+      339.0026308307271
+     ],
+     "max_route_dev_m": 12.746372476005664,
+     "max_roll_deg": 29.167075746732987
+    },
+    {
+     "wind_from": 180,
+     "finished": true,
+     "time_s": 33.38,
+     "min_clearance_m": -2.2564821842131586,
+     "worst_at": [
+      309.49806072154075,
+      339.84571421784034
+     ],
+     "max_route_dev_m": 18.687659362476793,
+     "max_roll_deg": 33.66896643022769
+    },
+    {
+     "wind_from": 225,
+     "finished": true,
+     "time_s": 31.04,
+     "min_clearance_m": -2.791090008751464,
+     "worst_at": [
+      310.2099822599555,
+      340.0792301714021
+     ],
+     "max_route_dev_m": 22.30449336980493,
+     "max_roll_deg": 34.682956599798096
+    },
+    {
+     "wind_from": 270,
+     "finished": true,
+     "time_s": 33.32,
+     "min_clearance_m": -1.8004299725430855,
+     "worst_at": [
+      308.8665614337094,
+      339.5706752020795
+     ],
+     "max_route_dev_m": 23.372297447250084,
+     "max_roll_deg": 34.70705792220449
+    },
+    {
+     "wind_from": 315,
+     "finished": true,
+     "time_s": 39.46,
+     "min_clearance_m": 0.08709931827113238,
+     "worst_at": [
+      306.311534759738,
+      338.25948949788653
+     ],
+     "max_route_dev_m": 20.160432762814484,
+     "max_roll_deg": 34.13789171129963
+    }
+   ],
+   "worst_clearance_m": -2.791090008751464,
+   "collisions": 5
+  },
+  "theta": {
+   "points": 5,
+   "planned_clearance_m": 11.02775452436488,
+   "runs": [
+    {
+     "wind_from": null,
+     "finished": true,
+     "time_s": 37.1,
+     "min_clearance_m": 11.009409992535005,
+     "worst_at": [
+      302.74203481989065,
+      353.5304258833202
+     ],
+     "max_route_dev_m": 6.738678966634978,
+     "max_roll_deg": 14.574928561509077
+    },
+    {
+     "wind_from": 0,
+     "finished": true,
+     "time_s": 45.980000000000004,
+     "min_clearance_m": 10.799389937297441,
+     "worst_at": [
+      121.7891543286551,
+      142.039612210523
+     ],
+     "max_route_dev_m": 5.412510606136189,
+     "max_roll_deg": 11.859869653607396
+    },
+    {
+     "wind_from": 45,
+     "finished": true,
+     "time_s": 49.32,
+     "min_clearance_m": 11.022481099255842,
+     "worst_at": [
+      302.6583061437721,
+      353.45316442654496
+     ],
+     "max_route_dev_m": 4.752528047069456,
+     "max_roll_deg": 10.900338909453966
+    },
+    {
+     "wind_from": 90,
+     "finished": true,
+     "time_s": 45.800000000000004,
+     "min_clearance_m": 11.020266409921518,
+     "worst_at": [
+      302.7377584275555,
+      353.5420852238581
+     ],
+     "max_route_dev_m": 5.225167366276374,
+     "max_roll_deg": 11.730299365881319
+    },
+    {
+     "wind_from": 135,
+     "finished": true,
+     "time_s": 38.24,
+     "min_clearance_m": 10.994944813088736,
+     "worst_at": [
+      302.7245177553612,
+      353.48795692306373
+     ],
+     "max_route_dev_m": 6.726485836905645,
+     "max_roll_deg": 14.109602871468866
+    },
+    {
+     "wind_from": 180,
+     "finished": true,
+     "time_s": 31.96,
+     "min_clearance_m": 10.976413653790978,
+     "worst_at": [
+      302.8144751109158,
+      353.5637343367655
+     ],
+     "max_route_dev_m": 8.09909845039572,
+     "max_roll_deg": 16.907988974135748
+    },
+    {
+     "wind_from": 225,
+     "finished": true,
+     "time_s": 29.76,
+     "min_clearance_m": 10.904687103485713,
+     "worst_at": [
+      122.00229257515511,
+      142.47832144427156
+     ],
+     "max_route_dev_m": 8.819151109176069,
+     "max_roll_deg": 18.166606528715864
+    },
+    {
+     "wind_from": 270,
+     "finished": true,
+     "time_s": 32.14,
+     "min_clearance_m": 8.801251349541964,
+     "worst_at": [
+      122.84059263596373,
+      140.12190807128502
+     ],
+     "max_route_dev_m": 8.328925823729442,
+     "max_roll_deg": 17.0510930437106
+    },
+    {
+     "wind_from": 315,
+     "finished": true,
+     "time_s": 38.5,
+     "min_clearance_m": 9.412481292191586,
+     "worst_at": [
+      122.2522200841937,
+      140.35385905496577
+     ],
+     "max_route_dev_m": 6.881218157049317,
+     "max_roll_deg": 14.330396314664284
+    }
+   ],
+   "worst_clearance_m": 8.801251349541964,
+   "collisions": 0
+  },
+  "theta_sources_west_wind": {
+   "est": {
+    "min_clearance_m": 9.78860044074019,
+    "max_route_dev_m": 8.264284309535944,
+    "finished": true
+   },
+   "air": {
+    "min_clearance_m": -4.468615373219762,
+    "max_route_dev_m": 15.569666974847523,
+    "finished": true
+   },
+   "gnss": {
+    "min_clearance_m": 8.595594443658278,
+    "max_route_dev_m": 7.782209320322838,
+    "finished": true
+   },
+   "true": {
+    "min_clearance_m": 8.801251349541964,
+    "max_route_dev_m": 8.328925823729442,
+    "finished": true
+   }
+  },
+  "downwind_turn_radius_m": 90.9880228556393,
+  "still_air_turn_radius_m": 58.232334627609156
+ }
+}
