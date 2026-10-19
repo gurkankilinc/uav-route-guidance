@@ -63,6 +63,7 @@ class GuidanceParams:
     l1_period: float = 17.0        # s
     l1_damping: float = 0.75
     wp_accept_radius: float = 30.0  # m
+    xtrack_i_gain: float = 0.0     # ArduPlane NAVL1_XTRACK_I; 0 = pure L1 (ArduPlane default 0.02)
 
     @property
     def k_l1(self) -> float:
@@ -99,6 +100,24 @@ class ApproachParams:
 
 
 @dataclass(frozen=True)
+class SensorParams:
+    """Measurement models used when the guidance does not get perfect state."""
+
+    gps_rate_hz: float = 5.0       # GNSS velocity update rate
+    gps_vel_sigma: float = 0.5     # m/s, per axis
+    airspeed_sigma: float = 0.5    # m/s
+    heading_sigma_deg: float = 1.0  # compass / AHRS heading noise
+
+
+@dataclass(frozen=True)
+class WindEstimatorParams:
+    """2-state Kalman filter: wind (east, north) as a random walk."""
+
+    process_sigma: float = 0.05    # m/s per sqrt(s), how fast the wind may drift
+    initial_sigma: float = 5.0     # m/s, prior uncertainty (wind unknown at start)
+
+
+@dataclass(frozen=True)
 class SimParams:
     dt: float = 0.02               # s (50 Hz)
     t_max: float = 300.0           # s
@@ -112,4 +131,6 @@ class Config:
     planner: PlannerParams = field(default_factory=PlannerParams)
     target: TargetParams = field(default_factory=TargetParams)
     approach: ApproachParams = field(default_factory=ApproachParams)
+    sensors: SensorParams = field(default_factory=SensorParams)
+    wind_estimator: WindEstimatorParams = field(default_factory=WindEstimatorParams)
     sim: SimParams = field(default_factory=SimParams)
