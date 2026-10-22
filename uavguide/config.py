@@ -96,7 +96,9 @@ class ApproachParams:
     """v(d) = v_t + (v_max - v_t) * tanh((d - d_follow) / d0)."""
 
     d_follow: float = 40.0         # m, desired trailing distance
-    d0: float = 150.0              # m, how early to start slowing down
+    d0: float = 60.0               # m, how early to start slowing down
+    capture_radius: float = 60.0   # m, "caught up" once closer than this ...
+    hold_time: float = 5.0         # s, ... and staying that close for this long
 
 
 @dataclass(frozen=True)
