@@ -26,7 +26,8 @@ The final step validates the simulated guidance against ArduPlane SITL.
 | Moving target + approach speed profile (8.2) | `uavguide/target.py`, `uavguide/pursuit.py` | done |
 | Planner registry, metrics, scenarios, Monte Carlo comparison | `uavguide/planners.py`, `metrics.py`, `scenarios.py`, `compare.py` | done |
 | Look-ahead zone guard (turn-aware safety layer) | `uavguide/safety.py` | done |
-| Streamlit app: animated runs, zone-size sliders, planner comparison | `app/` | next |
+| Potential-field guidance (classic APF, APF + vortex / Ge & Cui) and stress cases | `uavguide/potential.py`, `scripts/stress_test.py` | done |
+| Streamlit app: animated runs, zone-size sliders, planner comparison | `app/` | done |
 | ArduPlane SITL validation (Ubuntu) | `sitl/` | planned |
 
 ## Results
@@ -121,8 +122,58 @@ instead of 4 ms is irrelevant at a 2 s replan interval) and a collision-aware Do
 top of it is cheap insurance. Raw A* (hundreds of 2 m legs) catches less often and later than the simplified routes. The numbers
 are from 20 scenarios; use `--seeds 100` for tighter estimates.
 
+### Route planner or potential field?
+
+A potential field steers without a route: the aim point pulls, the zones and the area border push,
+and the resulting direction becomes a bank command (`uavguide/potential.py`). Its influence distance is
+two or three turn radii at the current airspeed, because a fixed-wing aircraft cannot turn on the spot.
+"APF + vortex" adds a tangential component around zones against local minima and the Ge & Cui (2000)
+goal-distance factor. The gains were picked on scenarios 100-119 (`scripts/tune_potential.py`) and the
+comparison below uses scenarios 0-19, so they are not fitted to the test set.
+
+| 20 scenarios | Guard off: success | zone entered | left area | Guard on: success | zone entered | left area |
+|---|---|---|---|---|---|---|
+| A* | 20 % | 80 % | 10 % | 55 % | 20 % | 10 % |
+| A* + DP | 25 % | 75 % | 0 % | 65 % | 20 % | 15 % |
+| Theta* | 35 % | 65 % | 5 % | 70 % | 15 % | 5 % |
+| Theta* + DP | 35 % | 65 % | 5 % | **80 %** | **5 %** | 10 % |
+| APF | 30 % | 45 % | 65 % | 55 % | 35 % | 30 % |
+| APF + vortex | **45 %** | **20 %** | 35 % | 65 % | 10 % | 25 % |
+
+Without the guard the vortex field is the most robust method (it knows about the turn radius, the
+routes do not); with the guard a Theta* route followed by L1 wins. The field's weak points are leaving
+the area and, as the literature predicts, local minima: in the hand-built U-trap the classic field
+circles in front of the trap for 300 s, and the vortex variant gets out but squeezes between two zones
+near the goal, where the Ge & Cui factor has weakened the repulsion
+(`python scripts/stress_test.py`). With 20 scenarios a success rate has a standard error of about
+11 points, so only the large differences are meaningful.
+
+![stress cases](docs/img/stress_paths.png)
+
 All guidance numbers above are written by `scripts/demo_guidance.py` to
 [`docs/img/guidance_results.json`](docs/img/guidance_results.json).
+
+## Interactive app
+
+```bash
+pip install -e ".[app]"
+streamlit run app/streamlit_app.py
+```
+
+Pick the scenario in the sidebar (seed, number and size of the no-fly zones, target type and speed, wind,
+whether the aircraft has to discover the zones with a sensor), choose the algorithms and whether the
+route is planned once or replanned every few seconds, then run. The zone table can be edited by hand
+(resize, move, add, delete). Turkish and English UI.
+
+* **Live simulation:** every algorithm on the same scenario side by side, one play button and one time slider.
+* **Metrics:** outcome, time to catch, flown distance, planning time and zone clearance per algorithm; a
+  ranking that first eliminates failures and then scores the rest with weights you set.
+* **Route detail:** step through the routes planned during the flight, and the distance, speed, roll and
+  clearance time series.
+* **Batch comparison:** the same comparison over many random scenarios, with outcome shares and distributions.
+
+![live simulation](docs/img/app_live.png)
+![batch comparison](docs/img/app_batch.png)
 
 ## Modeling assumptions
 
@@ -164,12 +215,14 @@ from ArduPilot: `_prevent_indecision` and loiter modes.
 python -m venv .venv
 .venv\Scripts\activate          # Windows  (Linux: source .venv/bin/activate)
 pip install -e .[app,dev]
-pytest
+pytest                                    # includes the app tests (Streamlit AppTest)
+streamlit run app/streamlit_app.py         # interactive comparison
 python scripts/demo_planning.py            # planning figures, default scenario
 python scripts/demo_planning.py --seed 7   # random obstacle field
 python scripts/compare_planners.py         # A* vs Theta* table
 python scripts/demo_guidance.py            # guidance + wind figures and results JSON
-python scripts/compare_pursuit.py          # all planners chase a moving target, Monte Carlo table
+python scripts/compare_pursuit.py          # all methods chase a moving target, Monte Carlo table
+python scripts/stress_test.py              # potential-field weak points (local minimum, U-trap, ...)
 ```
 
 Tests run on every push and pull request (Python 3.11-3.13) via GitHub Actions.

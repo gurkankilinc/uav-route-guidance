@@ -62,3 +62,40 @@ def make_scenario(
     return PursuitScenario(world=world, target=target,
                            start=VehicleState(float(start[0]), float(start[1]), psi0, cfg.vehicle.v_cruise),
                            wind=wind, detect_radius=detect_radius)
+
+
+def stress_scenarios(cfg: Config | None = None, wind: tuple[float, float] = (0.0, 0.0)) -> dict[str, PursuitScenario]:
+    """Hand-built cases aimed at the known weak points of potential fields (Koren & Borenstein 1991,
+    Ge & Cui 2000). The aircraft always starts on the west side heading east.
+
+    behind_zone   a large zone sits exactly on the line between aircraft and a fixed target:
+                  attraction and repulsion are collinear, the classic local minimum
+    u_trap        zones form a cup that opens towards the aircraft, the target is behind its bottom
+    narrow_gap    the straight line passes through a 30 m gap between two zones (10 m once inflated)
+    orbit_zone    the target circles a zone 25 m outside its edge, so the aim point is always
+                  close to a zone (goal non-reachable with obstacles nearby)
+    """
+    cfg = cfg or Config()
+    b = cfg.planner.area
+    v0 = cfg.vehicle.v_cruise
+
+    def fixed(x, y):
+        return MovingTarget(TargetParams(mode="fixed"), b, start=(x, y))
+
+    def start(x, y, heading_deg=90.0):
+        return VehicleState(x, y, math.radians(heading_deg), v0)
+
+    def world(zones):
+        return World(b, [Obstacle(float(x), float(y), float(r)) for x, y, r in zones])
+
+    u_zones = [(380, y, 22) for y in (210, 250, 290, 330, 370, 410)] \
+        + [(x, 190, 22) for x in (300, 340)] + [(x, 430, 22) for x in (300, 340)]
+    orbit = MovingTarget(TargetParams(speed=17.0, mode="circle", circle_radius=35.0 + 25.0), b,
+                         start=(400.0, 300.0), heading_deg=270.0)
+    return {
+        "behind_zone": PursuitScenario(world([(300, 300, 45)]), fixed(480, 300), start(80, 300), wind),
+        "u_trap": PursuitScenario(world(u_zones), fixed(500, 310), start(80, 310), wind),
+        "narrow_gap": PursuitScenario(world([(300, 255, 30), (300, 345, 30)]), fixed(520, 300),
+                                      start(80, 300), wind),
+        "orbit_zone": PursuitScenario(world([(400, 300, 35)]), orbit, start(80, 300), wind),
+    }

@@ -5,9 +5,9 @@ import pytest
 
 from uavguide.compare import monte_carlo, run_all, summarize
 from uavguide.config import Config, SimParams
-from uavguide.metrics import Metrics, rank
+from uavguide.metrics import Metrics, outcome, rank
 from uavguide.planners import PLANNERS
-from uavguide.pursuit import PursuitPolicy
+from uavguide.pursuit import METHODS, PursuitPolicy
 from uavguide.scenarios import make_scenario, scale_zones
 from uavguide.world import default_world, random_world
 
@@ -66,10 +66,11 @@ def test_scenario_wind_speed_and_direction():
 def test_run_all_returns_metrics_for_every_planner_on_the_same_scenario():
     cfg = replace(Config(), sim=SimParams(t_max=40.0))
     res = run_all(make_scenario(2), cfg=cfg)
-    assert list(res) == list(PLANNERS)
+    assert list(res) == list(METHODS)
     for name, (log, m) in res.items():
         assert m.planner == name == log.planner
-        assert m.flown_length > 0 and m.n_replans > 0 and m.plan_ms_mean >= 0
+        assert m.flown_length > 0 and m.plan_ms_mean >= 0
+        assert (m.n_replans > 0) == (name in PLANNERS)
 
 
 def test_metrics_are_identical_between_repeated_runs_except_wall_time():
@@ -87,3 +88,13 @@ def test_monte_carlo_and_summary_shape():
     assert set(rows) == {"A* + DP", "Theta*"} and all(len(v) == 2 for v in rows.values())
     s = summarize(rows)
     assert all(0.0 <= v["success_rate"] <= 1.0 and v["runs"] == 2 for v in s.values())
+
+
+def test_outcome_names_the_worst_problem_first():
+    from dataclasses import replace as rep
+    ok = fake("ok")
+    assert outcome(ok) == "success"
+    assert outcome(rep(ok, success=False, collided=True)) == "collided"
+    assert outcome(rep(ok, success=False, collided=True, left_area=True)) == "collided"
+    assert outcome(rep(ok, success=False, left_area=True)) == "left_area"
+    assert outcome(rep(ok, success=False, captured=False)) == "not_caught"

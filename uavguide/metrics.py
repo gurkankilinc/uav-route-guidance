@@ -44,6 +44,7 @@ class Metrics:
 def compute_metrics(log: PursuitLog, scenario: PursuitScenario, cfg: Config | None = None) -> Metrics:
     cfg = cfg or Config()
     ok = [e for e in log.replans if e.ok]
+    planned = [e for e in ok if e.reason != "field"]       # potential-field snapshots are not plans
     ms = np.array([e.plan_ms for e in ok]) if ok else np.zeros(1)
     first = ok[0].route if ok else log.pos[:1]
     min_clr = float(np.min(log.clearance)) if len(log.clearance) else math.inf
@@ -64,15 +65,26 @@ def compute_metrics(log: PursuitLog, scenario: PursuitScenario, cfg: Config | No
         flown_length=float(np.sum(np.hypot(*np.diff(log.pos, axis=0).T))),
         min_clearance=min_clr,
         planned_clearance=scenario.world.path_clearance(first) if len(first) > 1 else math.inf,
-        n_replans=len(log.replans),
+        n_replans=sum(e.reason != "field" for e in log.replans),
         plan_ms_mean=float(ms.mean()),
         plan_ms_max=float(ms.max()),
         nodes_total=int(sum(e.expanded for e in ok)),
-        mean_waypoints=float(np.mean([len(e.route) for e in ok])) if ok else 0.0,
+        mean_waypoints=float(np.mean([len(e.route) for e in planned])) if planned else math.nan,
         max_roll_deg=float(np.degrees(np.max(np.abs(log.phi)))),
         mean_abs_roll_deg=float(np.degrees(np.mean(np.abs(log.phi)))),
         track_rms_m=track,
     )
+
+
+def outcome(m: Metrics) -> str:
+    """One word per run: success | collided | left_area | not_caught (first that applies, in this order of severity)."""
+    if m.collided:
+        return "collided"
+    if m.left_area:
+        return "left_area"
+    if not m.captured:
+        return "not_caught"
+    return "success"
 
 
 # metric -> weight, lower is better except where negated below
