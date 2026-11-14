@@ -8,8 +8,7 @@ import numpy as np
 
 from .config import Config
 from .metrics import Metrics, compute_metrics
-from .planners import PLANNERS
-from .pursuit import PursuitLog, PursuitPolicy, PursuitScenario, pursue
+from .pursuit import METHODS, PursuitLog, PursuitPolicy, PursuitScenario, pursue
 
 
 def run_all(
@@ -22,7 +21,7 @@ def run_all(
     """Same world, same target, same wind, same noise seed for every planner."""
     cfg = cfg or Config()
     out = {}
-    for name in (list(planners) if planners is not None else list(PLANNERS)):
+    for name in (list(planners) if planners is not None else list(METHODS)):
         log = pursue(scenario, name, policy, cfg, seed=seed)
         out[name] = (log, compute_metrics(log, scenario, cfg))
     return out
@@ -36,7 +35,7 @@ def monte_carlo(
     cfg: Config | None = None,
 ) -> dict[str, list[Metrics]]:
     """One scenario per seed, every planner on each; returns the raw per-run metrics."""
-    names = list(planners) if planners is not None else list(PLANNERS)
+    names = list(planners) if planners is not None else list(METHODS)
     rows: dict[str, list[Metrics]] = {n: [] for n in names}
     for seed in seeds:
         scenario = make(seed)
@@ -46,7 +45,7 @@ def monte_carlo(
 
 
 def summarize(rows: dict[str, list[Metrics]]) -> dict[str, dict]:
-    """Success / collision rates and medians over the runs that succeeded."""
+    """Success / collision / left-area rates and medians over the runs that succeeded."""
     out = {}
     for name, ms in rows.items():
         ok = [m for m in ms if m.success]
@@ -55,6 +54,7 @@ def summarize(rows: dict[str, list[Metrics]]) -> dict[str, dict]:
             runs=len(ms),
             success_rate=len(ok) / len(ms) if ms else 0.0,
             collision_rate=sum(m.collided for m in ms) / len(ms) if ms else 0.0,
+            left_area_rate=sum(m.left_area for m in ms) / len(ms) if ms else 0.0,
             time_to_capture=med("time_to_capture"),
             flown_length=med("flown_length"),
             plan_ms_mean=med("plan_ms_mean"),

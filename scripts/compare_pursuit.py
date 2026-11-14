@@ -40,7 +40,7 @@ def main() -> None:
     print(f"{'planner':<12} {'success':>8} {'collided':>9} {'left area':>10} {'t_capture':>10} "
           f"{'flown m':>8} {'plan ms':>8} {'min clr m':>10}")
     for name, s in summary.items():
-        left = sum(m.left_area for m in rows[name]) / len(rows[name])
+        left = s["left_area_rate"]
         print(f"{name:<12} {s['success_rate']:>8.0%} {s['collision_rate']:>9.0%} {left:>10.0%} "
               f"{s['time_to_capture']:>10.1f} {s['flown_length']:>8.0f} {s['plan_ms_mean']:>8.1f} "
               f"{s['min_clearance']:>10.1f}")
