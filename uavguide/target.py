@@ -33,14 +33,16 @@ class MovingTarget:
         bounds: tuple[float, float, float, float],
         start=(300.0, 300.0),
         heading_deg: float = 45.0,
-        margin: float = 20.0,
-        turn_radius: float = 60.0,
+        margin: float | None = None,
+        turn_radius: float | None = None,
         horizon: float = 600.0,
         dt: float = 0.05,
     ):
         if params.mode not in ("line", "circle", "fixed"):
             raise ValueError(f"unknown target mode {params.mode!r}")
         self.p = params
+        margin = params.wall_margin if margin is None else margin
+        turn_radius = params.turn_radius if turn_radius is None else turn_radius
         x0, y0, x1, y1 = bounds
         self.lo = np.array([x0 + margin, y0 + margin])
         self.hi = np.array([x1 - margin, y1 - margin])

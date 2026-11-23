@@ -24,7 +24,10 @@ The final step validates the simulated guidance against ArduPlane SITL.
 | Fixed-wing model + ArduPlane-style L1 guidance + wind (XTE) | `uavguide/vehicle.py`, `uavguide/guidance.py`, `uavguide/sim.py` | done |
 | Wind estimation (Kalman) as a velocity source for the guidance | `uavguide/wind.py`, `uavguide/sensors.py` | done |
 | Moving target + approach speed profile (8.2) | `uavguide/target.py`, `uavguide/pursuit.py` | done |
-| Planner registry, metrics, scenarios, Monte Carlo comparison | `uavguide/planners.py`, `metrics.py`, `scenarios.py`, `compare.py` | done |
+| Navigation core, separate from the simulation | `uavguide/navcore.py` | done |
+| Control rate, command delay, route latency, sensor noise in the pursuit | `uavguide/pursuit.py` | done |
+| Geodetic conversion and MAVLink telemetry to core state; flight recorder and replay | `uavguide/geo.py`, `uavguide/recorder.py` | done |
+| Planner registry, metrics, scenarios, Monte Carlo comparison with confidence intervals and paired tests | `uavguide/planners.py`, `metrics.py`, `scenarios.py`, `compare.py` | done |
 | Look-ahead zone guard (turn-aware safety layer) | `uavguide/safety.py` | done |
 | Potential-field guidance (classic APF, APF + vortex / Ge & Cui) and stress cases | `uavguide/potential.py`, `scripts/stress_test.py` | done |
 | Streamlit app: animated runs, zone-size sliders, planner comparison | `app/` | done |
@@ -91,67 +94,118 @@ estimated wind it keeps 9.8 m.
 ![flown routes](docs/img/route_flown.png)
 ![clearance by wind direction](docs/img/clearance_by_wind.png)
 
-### Pursuing a moving target: which planner is best?
+### Pursuing a moving target: which method is best?
 
-`pursue()` flies the whole 8.2 loop at 50 Hz: the target moves (straight line with smooth turns at
-the walls, a circle, or fixed), the route is replanned from the current position every `interval`
-seconds, the last waypoint follows the target live and the L1 guidance flies it. The aircraft
-aims at the point `d_follow` (40 m) *behind* the target and its speed follows
-`v(d) = v_t + (v_max - v_t) tanh((d - d_follow) / d0)`, converted to an airspeed command with the wind
-the guidance believes in. "Caught" means within 60 m of the target for 5 s. Zone sizes are a
-scenario setting (fixed during a flight); `scale_zones()` grows or shrinks them between runs.
+`pursue()` flies the whole 8.2 loop at 50 Hz. The target moves (straight line with smooth turns at
+the walls, a circle, or fixed) and the navigation core returns a bank and an airspeed command:
 
-20 random scenarios (12 zones, 5 m/s wind from a random direction, target speed 17 m/s), every planner
-on the same scenarios (`python scripts/compare_pursuit.py --seeds 20`):
+* the aircraft aims at the point `d_follow` (40 m) *behind* the target,
+* **route methods** (A*, Theta*, with or without Douglas-Peucker) replan from the current position
+  every `interval` seconds and follow the route with the L1 guidance; the last waypoint tracks the aim,
+* **potential-field methods** draw no route: the aim pulls, the zones and the border push, and the
+  resulting direction becomes a bank command. The influence distance is two or three turn radii at
+  the current airspeed, because a fixed-wing aircraft cannot turn on the spot. "APF + vortex" adds a
+  tangential component around zones (against local minima) and the Ge & Cui (2000) goal-distance factor,
+* speed follows `v(d) = v_t + (v_max - v_t) tanh((d - d_follow) / d0)`, corrected for the wind the
+  aircraft can infer,
+* an optional look-ahead **guard** rolls the aircraft's own turn forward and steers away if it would
+  enter a zone or leave the area. It is the same for every method.
 
-| Planner | Caught, no violation | Entered a zone | Left the area | Median time to catch | Median plan time |
+"Caught" means within 60 m of the target for 5 s without entering a zone or leaving the area.
+
+**100 held-out scenarios** (seeds 200-299: 12 zones, 5 m/s wind from a random direction, 17 m/s target),
+every method on the same scenarios, replanning every 2 s (`python scripts/compare_pursuit.py`):
+
+| Method | Guard on: success (95 % interval) | zone entered | left area | guard steering | Guard off: success | zone entered | left area |
+|---|---|---|---|---|---|---|---|
+| A* | 58 % (48-67) | 26 % | 22 % | 20 % of the time | 15 % | 82 % | 7 % |
+| A* + DP | **69 %** (59-77) | 15 % | 14 % | 17 % | 25 % | 73 % | 6 % |
+| Theta* | 64 % (54-73) | 16 % | 14 % | 15 % | 35 % | 63 % | 6 % |
+| Theta* + DP | 65 % (55-74) | 13 % | 15 % | 15 % | 37 % | 61 % | 4 % |
+| APF | 49 % (39-59) | 33 % | 34 % | 13 % | 26 % | 62 % | 67 % |
+| APF + vortex | 61 % (51-70) | 27 % | 20 % | 14 % | **43 %** | **39 %** | 35 % |
+
+What the numbers support, using paired tests on the same scenarios (exact McNemar):
+
+* **With the guard, the four best methods cannot be told apart.** A* + DP, Theta*, Theta* + DP and
+  APF + vortex differ by 4-8 points with p = 0.28-0.61. Only the classic field is clearly worse than
+  the best (20 points, p = 0.005); raw A* is borderline (11 points, p = 0.07).
+* **The guard matters more than the choice of planner.** It adds 28-44 points to every route method
+  and 18-23 to the fields, and it is steering 13-20 % of the flight time. Without it 61-82 % of the
+  route-method flights enter a zone, because a route replanned from the current position can start
+  with a turn the aircraft is too fast to make (40-100 m radius against a 10 m planning margin).
+* **Without the guard the vortex field is the most robust** (43 %, zone entries 39 %): its influence
+  distance already contains the turn radius. It beats A*, A* + DP and the classic field
+  (p < 0.02) but not the Theta* variants (p = 0.24 and 0.42). Its weak point is leaving the area.
+* **Replanning is essential for the route methods.** With a single plan at the start
+  (`--interval 0`) they succeed in 1-25 % of the scenarios.
+
+**A less than ideal link to the aircraft.** The table above assumes the core runs at 50 Hz, its
+commands act at once and it knows the exact ground velocity. A real autopilot link (and SITL) does
+not. The same 100 scenarios, guard on, each condition compared with the ideal run of the same method
+on the same scenarios (exact McNemar):
+
+| Method | Ideal | Noisy 5 Hz GNSS | Air data + wind estimate | 10 Hz core, 0.2 s command delay, 0.3 s route latency | All of it together |
 |---|---|---|---|---|---|
-| A* | 55 % | 20 % | 10 % | 86.6 s | 3.4 ms |
-| A* + DP | 65 % | 20 % | 15 % | 80.3 s | 4.4 ms |
-| Theta* | 70 % | 15 % | 5 % | **65.4 s** | 24.5 ms |
-| **Theta\* + DP** | **80 %** | **5 %** | 10 % | 74.0 s | 23.5 ms |
+| A* | 58 % | 56 % | 55 % | 45 % (p = 0.05) | 46 % (p = 0.07) |
+| A* + DP | 69 % | 77 % | 73 % | **53 % (p = 0.02)** | **53 % (p = 0.02)** |
+| Theta* | 64 % | 67 % | 72 % | 62 % | 55 % (p = 0.12) |
+| Theta* + DP | 65 % | 62 % | 69 % | 58 % | **58 %** (p = 0.28) |
+| APF | 49 % | 43 % | 44 % | 37 % (p = 0.06) | 41 % |
+| APF + vortex | 61 % | 59 % | 63 % | 51 % (p = 0.10) | 53 % |
 
-Replanning every 2 s. The same scenarios flown with a **single plan** at the start (`--interval 0`):
-0-10 % success and 30-55 % zone violations for every planner, so replanning is what makes pursuit work.
-Without the look-ahead guard (`--no-guard`) 65-80 % of the flights enter a zone, because a route
-replanned from the current position can start with a turn the aircraft is too fast to make (it needs
-a 40-100 m radius, the planning margin is 10 m).
+* **Measurement noise costs nothing measurable.** Noisy GNSS or the wind estimator change the rates
+  by a few points either way, all within chance (p >= 0.15).
+* **Timing does.** A slower core with delays costs most methods 7-16 points; for A* + DP the drop is
+  significant (p = 0.02). The Theta* variants lose the least (2-9 points, not significant). Under the
+  realistic link Theta* + DP comes out on top, but only the classic field is clearly behind it
+  (p = 0.02); raw A* is borderline (p = 0.07) and the rest are within chance.
+* This is the first thing to check against SITL: the MAVLink link will set the real rate and delay.
+  `PursuitPolicy(control_rate_hz=..., command_delay=..., plan_latency=..., velocity_source=...)`, the
+  same options in `compare_pursuit.py` (`--rate --delay --plan-latency --source`) and in the app.
 
-What this says: for a chase, Theta* is the better *search* (shorter routes, fewer waypoints, 25 ms
-instead of 4 ms is irrelevant at a 2 s replan interval) and a collision-aware Douglas-Peucker pass on
-top of it is cheap insurance. Raw A* (hundreds of 2 m legs) catches less often and later than the simplified routes. The numbers
-are from 20 scenarios; use `--seeds 100` for tighter estimates.
+An earlier version of this table, from 20 scenarios (seeds 0-19), put Theta* + DP at 80 %. Those
+seeds were also the ones the pursuit constants had been tuned on, and 20 runs give an interval of
+about +-20 points. The 100 held-out scenarios above are the honest numbers; `scenarios.py` now keeps
+tuning seeds (100-199) and test seeds (200-299) apart.
 
-### Route planner or potential field?
-
-A potential field steers without a route: the aim point pulls, the zones and the area border push,
-and the resulting direction becomes a bank command (`uavguide/potential.py`). Its influence distance is
-two or three turn radii at the current airspeed, because a fixed-wing aircraft cannot turn on the spot.
-"APF + vortex" adds a tangential component around zones against local minima and the Ge & Cui (2000)
-goal-distance factor. The gains were picked on scenarios 100-119 (`scripts/tune_potential.py`) and the
-comparison below uses scenarios 0-19, so they are not fitted to the test set.
-
-| 20 scenarios | Guard off: success | zone entered | left area | Guard on: success | zone entered | left area |
-|---|---|---|---|---|---|---|
-| A* | 20 % | 80 % | 10 % | 55 % | 20 % | 10 % |
-| A* + DP | 25 % | 75 % | 0 % | 65 % | 20 % | 15 % |
-| Theta* | 35 % | 65 % | 5 % | 70 % | 15 % | 5 % |
-| Theta* + DP | 35 % | 65 % | 5 % | **80 %** | **5 %** | 10 % |
-| APF | 30 % | 45 % | 65 % | 55 % | 35 % | 30 % |
-| APF + vortex | **45 %** | **20 %** | 35 % | 65 % | 10 % | 25 % |
-
-Without the guard the vortex field is the most robust method (it knows about the turn radius, the
-routes do not); with the guard a Theta* route followed by L1 wins. The field's weak points are leaving
-the area and, as the literature predicts, local minima: in the hand-built U-trap the classic field
-circles in front of the trap for 300 s, and the vortex variant gets out but squeezes between two zones
-near the goal, where the Ge & Cui factor has weakened the repulsion
-(`python scripts/stress_test.py`). With 20 scenarios a success rate has a standard error of about
-11 points, so only the large differences are meaningful.
+The fields also fail the way the literature predicts (`python scripts/stress_test.py`): in a
+hand-built U-trap the classic field circles in front of the trap for 300 s, and the vortex variant
+gets out but squeezes between two zones near the goal, where the Ge & Cui factor has weakened the
+repulsion.
 
 ![stress cases](docs/img/stress_paths.png)
 
 All guidance numbers above are written by `scripts/demo_guidance.py` to
 [`docs/img/guidance_results.json`](docs/img/guidance_results.json).
+
+## Architecture: the navigation core
+
+Everything that decides where the aircraft goes is in `uavguide/navcore.py` and has no simulation
+in it:
+
+```python
+nav = Navigator("Theta* + DP", cfg, replan_interval=2.0, guard=True)
+cmd = nav.update(state, target, zones, dt)      # -> cmd.roll [rad], cmd.airspeed [m/s]
+```
+
+`state` is what an autopilot reports (position, heading, bank, airspeed, ground velocity), `target`
+is a position and a velocity, `zones` are the no-fly zones known so far and the area border. The
+wind is not an input; the core infers it from ground velocity minus air velocity. The built-in
+simulation (`pursuit.py`) is one caller of this interface. ArduPlane SITL through MAVLink, or a
+companion computer on a real aircraft, would be another, with the same core. A test flies the core
+from a bare loop and checks that the path is identical to the simulation's.
+
+Two helpers sit at that boundary:
+
+* `uavguide/geo.py` converts latitude / longitude to the core's east / north metres (WGS-84 tangent
+  plane) and builds a `NavState` straight from MAVLink fields (`GLOBAL_POSITION_INT`, `ATTITUDE`,
+  `VFR_HUD`).
+* `uavguide/recorder.py` writes every core input and output to a JSON-lines file and replays it
+  through a fresh core. The core is deterministic, so the replay must reproduce every command exactly;
+  when a SITL or real flight looks wrong, this separates "the core decided badly" from "the core was
+  given bad data". `python scripts/replay_nav.py flight.jsonl`, or `--method` to ask what another
+  method would have done with the same inputs.
 
 ## Interactive app
 
@@ -221,7 +275,7 @@ python scripts/demo_planning.py            # planning figures, default scenario
 python scripts/demo_planning.py --seed 7   # random obstacle field
 python scripts/compare_planners.py         # A* vs Theta* table
 python scripts/demo_guidance.py            # guidance + wind figures and results JSON
-python scripts/compare_pursuit.py          # all methods chase a moving target, Monte Carlo table
+python scripts/compare_pursuit.py --procs 4   # all methods on 100 held-out scenarios, intervals and paired tests
 python scripts/stress_test.py              # potential-field weak points (local minimum, U-trap, ...)
 ```
 

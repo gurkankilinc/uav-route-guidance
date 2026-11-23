@@ -59,6 +59,12 @@ guard = sb.checkbox(T("guard"), True, help=T("guard_help"))
 with sb.expander(T("advanced")):
     t_max = st.slider(T("t_max"), 30, 300, 300, 10)
     margin = st.slider(T("margin"), 5, 60, 10, 1)
+    st.caption(T("link_caption"))
+    rate = st.select_slider(T("link_rate"), [5, 10, 20, 50], 50)
+    delay = st.slider(T("link_delay"), 0.0, 1.0, 0.0, 0.1)
+    plan_latency = st.slider(T("link_plan"), 0.0, 1.0, 0.0, 0.1)
+    vel_source = st.selectbox(T("link_source"), ["true", "gnss", "wind_est", "air_only"],
+                              format_func=lambda k: T("source_" + k))
 
 run_clicked = sb.button(T("run"), type="primary", width="stretch")
 
@@ -67,7 +73,9 @@ base_cfg = Config()
 cfg = replace(base_cfg, sim=SimParams(dt=base_cfg.sim.dt, t_max=float(t_max)),
               planner=replace(base_cfg.planner, safety_margin=float(margin),
                               dp_clearance=float(min(base_cfg.planner.dp_clearance, margin))))
-policy = PursuitPolicy(replan_interval=None if replan_mode == "once" else float(interval), guard=guard)
+policy = PursuitPolicy(replan_interval=None if replan_mode == "once" else float(interval), guard=guard,
+                       control_rate_hz=None if rate == 50 else float(rate), command_delay=float(delay),
+                       plan_latency=float(plan_latency), velocity_source=vel_source)
 scenario_args = dict(zone_scale=float(zone_scale), n_zones=int(n_zones), target_mode=target_mode,
                      target_speed=float(target_speed), wind_speed=float(wind_speed),
                      wind_from_deg=float(wind_from), detect_radius=float(detect) if hidden else None)
@@ -84,7 +92,8 @@ obstacles = [Obstacle(float(r.x), float(r.y), max(float(r.r), 1.0))
 scenario = replace(base, world=World(base.world.bounds, obstacles))
 
 signature = (seed, tuple(sorted(scenario_args.items(), key=lambda kv: kv[0])), tuple(planners), replan_mode,
-             interval, guard, t_max, margin, tuple((o.x, o.y, o.r) for o in obstacles))
+             interval, guard, t_max, margin, rate, delay, plan_latency, vel_source,
+             tuple((o.x, o.y, o.r) for o in obstacles))
 
 # ----------------------------------------------------------------------------- run
 if not planners:
@@ -150,9 +159,10 @@ if section == "metrics":
         T("m_replans"): by_name[n].n_replans,
         T("m_waypoints"): by_name[n].mean_waypoints,
         T("m_roll"): by_name[n].max_roll_deg,
+        T("m_guard"): 100.0 * by_name[n].guard_share,
     } for n, s in order])
     fmt = {T("col_score"): "%.2f", T("m_time"): "%.1f", T("m_length"): "%.0f", T("m_plan_ms"): "%.1f",
-           T("m_clearance"): "%.1f", T("m_waypoints"): "%.1f", T("m_roll"): "%.0f"}
+           T("m_clearance"): "%.1f", T("m_waypoints"): "%.1f", T("m_roll"): "%.0f", T("m_guard"): "%.1f"}
     st.dataframe(table, hide_index=True, width="stretch",
                  column_config={k: st.column_config.NumberColumn(format=f) for k, f in fmt.items()})
     st.caption(T("metrics_note"))
@@ -192,6 +202,7 @@ if section == "batch":
         st.dataframe(pd.DataFrame([{
             T("col_planner"): n,
             T("batch_table_success"): s["success_rate"],
+            T("batch_table_ci"): f"{s['success_lo']:.0%} - {s['success_hi']:.0%}",
             T("batch_table_collision"): s["collision_rate"],
             T("batch_table_left"): s["left_area_rate"],
             T("batch_table_time"): s["time_to_capture"],

@@ -36,6 +36,7 @@ class Metrics:
     max_roll_deg: float
     mean_abs_roll_deg: float
     track_rms_m: float             # rms(distance - d_follow) after the capture; nan if never caught
+    guard_share: float = 0.0       # fraction of the flight the look-ahead guard was overriding the steering
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -73,6 +74,7 @@ def compute_metrics(log: PursuitLog, scenario: PursuitScenario, cfg: Config | No
         max_roll_deg=float(np.degrees(np.max(np.abs(log.phi)))),
         mean_abs_roll_deg=float(np.degrees(np.mean(np.abs(log.phi)))),
         track_rms_m=track,
+        guard_share=float(log.guard_time / max(float(log.t[-1]), cfg.sim.dt)) if len(log.t) else 0.0,
     )
 
 
@@ -87,12 +89,14 @@ def outcome(m: Metrics) -> str:
     return "success"
 
 
-# metric -> weight, lower is better except where negated below
+# metric -> weight, lower is better except where negated below.
+# Planning time is measured with the wall clock, so it changes with the machine and its load.
+# Its default weight is 0 to keep the default ranking reproducible; set it if it matters to you.
 DEFAULT_WEIGHTS = {
-    "time_to_capture": 0.4,
-    "flown_length": 0.2,
-    "plan_ms_mean": 0.2,
-    "min_clearance": 0.2,
+    "time_to_capture": 0.5,
+    "flown_length": 0.25,
+    "plan_ms_mean": 0.0,
+    "min_clearance": 0.25,
 }
 _HIGHER_IS_BETTER = {"min_clearance"}
 

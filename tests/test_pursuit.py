@@ -107,3 +107,39 @@ def test_run_is_deterministic():
     a = pursue(sc, "A* + DP")
     b = pursue(sc, "A* + DP")
     assert np.array_equal(a.pos, b.pos) and a.capture_t == b.capture_t
+
+
+# ---------------------------------------------------------------- a less than ideal link to the aircraft
+def test_lower_control_rate_holds_the_command_between_updates():
+    log = pursue(scenario(wind=(3.0, 2.0)), "Theta*", PursuitPolicy(2.0, control_rate_hz=10.0))
+    change = np.flatnonzero(np.diff(log.phi_cmd) != 0.0) + 1
+    assert len(change) > 20 and np.all(change % 5 == 0)      # 50 Hz simulation, 10 Hz core
+    assert log.captured
+
+
+def test_command_delay_leaves_the_aircraft_on_its_own_at_first():
+    cfg = Config()
+    log = pursue(scenario(start=(100.0, 500.0)), "Theta*", PursuitPolicy(2.0, command_delay=0.5), cfg)
+    assert np.all(log.phi_cmd[:25] == 0.0) and np.all(log.v_cmd[:25] == cfg.vehicle.v_cruise)
+    assert log.phi_cmd[25] != 0.0                            # the first command arrives after 0.5 s
+
+
+def test_realistic_link_still_catches_the_target_in_open_sky():
+    policy = PursuitPolicy(2.0, control_rate_hz=10.0, command_delay=0.2, plan_latency=0.3, velocity_source="wind_est")
+    log = pursue(scenario(wind=(4.0, -3.0)), "Theta* + DP", policy)
+    assert log.captured
+
+
+def test_velocity_source_changes_the_flight_and_is_seeded():
+    sc = scenario(wind=(4.0, -3.0))
+    true = pursue(sc, "Theta*", PursuitPolicy(2.0))
+    a = pursue(sc, "Theta*", PursuitPolicy(2.0, velocity_source="gnss"), seed=1)
+    b = pursue(sc, "Theta*", PursuitPolicy(2.0, velocity_source="gnss"), seed=1)
+    c = pursue(sc, "Theta*", PursuitPolicy(2.0, velocity_source="gnss"), seed=2)
+    assert np.array_equal(a.pos, b.pos)
+    assert not np.array_equal(a.pos[:200], true.pos[:200]) and not np.array_equal(a.pos[:200], c.pos[:200])
+
+
+def test_unknown_velocity_source_is_rejected():
+    with pytest.raises(ValueError):
+        pursue(scenario(), "Theta*", PursuitPolicy(2.0, velocity_source="radar"))
