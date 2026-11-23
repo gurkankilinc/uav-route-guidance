@@ -7,14 +7,13 @@ the L1 turn distance of B or has passed it.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, replace
 from typing import Callable
 
 import numpy as np
 
 from .config import Config
-from .guidance import L1Guidance
+from .guidance import L1Guidance, heading_of
 from .sensors import TrueGroundVelocity, VelocitySource
 from .simplify import point_segment_distance
 from .vehicle import FixedWing, VehicleState
@@ -59,15 +58,6 @@ def constant_wind(vec) -> WindFn:
     return lambda t: w
 
 
-def _heading_of(a, b) -> float:
-    return math.atan2(b[0] - a[0], b[1] - a[1])   # clockwise from north
-
-
-def _turn_angle_deg(a, b, c) -> float:
-    h1, h2 = _heading_of(a, b), _heading_of(b, c)
-    return math.degrees((h2 - h1 + math.pi) % (2 * math.pi) - math.pi)
-
-
 def follow_route(
     route,
     cfg: Config | None = None,
@@ -94,7 +84,7 @@ def follow_route(
     guid = L1Guidance(cfg.guidance, cfg.vehicle)
     v_cmd = cfg.vehicle.v_cruise
     s = start or VehicleState(x=route[0, 0], y=route[0, 1],
-                              psi=_heading_of(route[0], route[1]), v=v_cmd)
+                              psi=heading_of(route[0], route[1]), v=v_cmd)
 
     n = int(round(t_max / dt)) + 1
     T = np.empty(n); P = np.empty((n, 2)); PSI = np.empty(n); PHI = np.empty(n)
@@ -120,9 +110,7 @@ def follow_route(
         along = float((s.pos - a) @ ab) / max(float(np.hypot(*ab)), 1e-9)
         dist_b = float(np.hypot(*(b - s.pos)))
         if leg < last:
-            turn = _turn_angle_deg(a, b, route[leg + 2])
-            if dist_b <= guid.turn_distance(cfg.guidance.wp_accept_radius, turn, gs) \
-                    or along >= float(np.hypot(*ab)):
+            if guid.leg_complete(cfg.guidance.wp_accept_radius, s.pos, gs, a, b, route[leg + 2]):
                 leg += 1
         elif stop_at_end and (dist_b <= cfg.guidance.wp_accept_radius or along >= float(np.hypot(*ab))):
             finished = True

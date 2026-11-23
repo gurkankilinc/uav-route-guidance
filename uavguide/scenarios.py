@@ -15,6 +15,13 @@ from .world import Obstacle, World, random_world
 
 START = (30.0, 30.0)
 
+# Seeds are split so that nothing is tuned on the scenarios it is judged on.
+#   TUNE_SEEDS  for choosing gains and constants (scripts/tune_potential.py uses the first 20)
+#   TEST_SEEDS  for reported results only; never look at individual runs here while tuning
+# Seeds 0-19 were used for both during early development (v1), which is why they are in neither set.
+TUNE_SEEDS = range(100, 200)
+TEST_SEEDS = range(200, 300)
+
 
 def scale_zones(world: World, k: float) -> World:
     """Every zone radius multiplied by k (zone size is a scenario setting, fixed during a flight)."""

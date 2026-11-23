@@ -3,8 +3,8 @@ import math
 import numpy as np
 import pytest
 
-from uavguide.planner import GridMap, PlanningError, plan_route
-from uavguide.theta_star import line_of_sight, plan_route_theta, theta_star
+from uavguide.planner import PlanningError, plan_route
+from uavguide.theta_star import line_of_sight, plan_route_theta
 from uavguide.world import Obstacle, World, default_world, random_world
 
 BOUNDS = (0.0, 0.0, 600.0, 600.0)

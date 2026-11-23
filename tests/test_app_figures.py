@@ -1,4 +1,3 @@
-import math
 from dataclasses import replace
 
 import pytest
@@ -36,7 +35,8 @@ def test_every_translation_key_used_by_the_app_exists():
     used = {k for k in re.findall(r'\bT\("([a-z0-9_]+)"', src) if not k.endswith("_")}   # "target_" + mode are dynamic
     used |= {f"target_{m}" for m in ("line", "circle", "fixed")} \
         | {f"replan_{m}" for m in ("every", "once")} | {f"out_{o}" for o in ("success", "collided", "left_area", "not_caught")} \
-        | {f"reason_{r}" for r in ("initial", "periodic", "detected", "field")}
+        | {f"reason_{r}" for r in ("initial", "periodic", "detected", "field")} \
+        | {f"source_{r}" for r in ("true", "gnss", "wind_est", "air_only")}
     assert used <= set(TEXT["en"]), used - set(TEXT["en"])
 
 
@@ -54,7 +54,6 @@ def test_animation_has_one_frame_per_step_and_a_panel_per_planner(run):
 def test_animation_frames_move_the_aircraft(run):
     sc, res = run
     fig = F.animation_figure(res, sc, CFG, T, frames=20)
-    kinds = {i: d for i, d in enumerate(fig.frames[0].traces)}
     aircraft_idx = [j for j, tr in enumerate(fig.frames[0].data) if tr.marker is not None and tr.marker.symbol == "triangle-up"]
     first = fig.frames[0].data[aircraft_idx[0]]
     last = fig.frames[-1].data[aircraft_idx[0]]

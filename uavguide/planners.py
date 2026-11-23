@@ -18,6 +18,7 @@ import numpy as np
 
 from .config import PlannerParams
 from .planner import GridMap, astar
+from .shortcut import los_shortcut
 from .simplify import douglas_peucker
 from .theta_star import theta_star
 from .world import World
@@ -33,15 +34,20 @@ class PlanOutcome:
 PlanFn = Callable[[GridMap, World, tuple, tuple, PlannerParams], PlanOutcome]
 
 
-def _make(search, simplify: bool) -> PlanFn:
+def _make(search, simplify: bool | str) -> PlanFn:
     def run(grid, world, start, goal, params):
         t0 = time.perf_counter()
         res = search(grid, start, goal)
         route = res.path
-        if simplify:
+        if simplify == "los":
+            # full margin to the zones and to the border, so the shortcut never eats into it
+            m = params.safety_margin
+            route, _ = los_shortcut(
+                route, segment_ok=lambda a, b: world.segment_clear(a, b, m) and world.segment_inside(a, b, m))
+        elif simplify:
             route, _ = douglas_peucker(
                 route, params.dp_epsilon,
-                segment_ok=lambda a, b: world.segment_clear(a, b, params.dp_clearance))
+                segment_ok=lambda a, b: world.segment_clear(a, b, params.dp_clearance) and world.segment_inside(a, b))
         return PlanOutcome(np.asarray(route, dtype=float), res.expanded, (time.perf_counter() - t0) * 1e3)
     return run
 
@@ -49,6 +55,7 @@ def _make(search, simplify: bool) -> PlanFn:
 PLANNERS: dict[str, PlanFn] = {
     "A*": _make(astar, False),
     "A* + DP": _make(astar, True),
+    "A* + LOS": _make(astar, "los"),
     "Theta*": _make(theta_star, False),
     "Theta* + DP": _make(theta_star, True),
 }
@@ -75,6 +82,14 @@ def free_point(world: World, p, margin: float, extra: float = 3.0) -> np.ndarray
                 p = c + u * (o.r + margin + extra)
                 moved = True
         p = np.clip(p, lo, hi)
+        if world.polygon is not None and world.border_clearance(p) < margin + extra:
+            # outside (or too close to) the polygon border: go to the nearest border point, then inwards
+            q = world.nearest_border_point(p)
+            d = (q - p) if not world.contains(*p) else (p - q)
+            n = float(np.hypot(*d))
+            u = d / n if n > 1e-9 else (world.polygon.mean(axis=0) - q) / max(float(np.hypot(*(world.polygon.mean(axis=0) - q))), 1e-9)
+            p = q + u * (margin + extra)
+            moved = True
         if not moved:
             break
     return p

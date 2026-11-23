@@ -24,6 +24,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import numpy as np
+
 from .config import G, GuidanceParams, VehicleParams
 
 _SIN45 = 0.7071
@@ -124,6 +126,25 @@ class L1Guidance:
         d90 = min(wp_radius, self.l1_distance(groundspeed))
         ang = abs(turn_angle_deg)
         return d90 if ang >= 90.0 else d90 * ang / 90.0
+
+    def leg_complete(self, wp_radius: float, pos, groundspeed: float, a, b, c) -> bool:
+        """ArduPlane-style leg switching for the leg a -> b when the next waypoint is c:
+        done once the aircraft is within the turn distance of b, or has flown past it."""
+        ab = b - a
+        ab_len = float(np.hypot(*ab))
+        along = float((pos - a) @ ab) / max(ab_len, 1e-9)
+        return float(np.hypot(*(b - pos))) <= self.turn_distance(wp_radius, turn_angle_deg(a, b, c), groundspeed) \
+            or along >= ab_len
+
+
+def heading_of(a, b) -> float:
+    """Course from a to b, rad clockwise from north."""
+    return math.atan2(b[0] - a[0], b[1] - a[1])
+
+
+def turn_angle_deg(a, b, c) -> float:
+    """Signed course change at b on the path a -> b -> c, in (-180, 180]."""
+    return math.degrees((heading_of(b, c) - heading_of(a, b) + math.pi) % (2 * math.pi) - math.pi)
 
 
 def initial_roll_for_offset(offset_right: float, params: GuidanceParams, v: float = 20.0) -> float:

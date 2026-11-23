@@ -87,8 +87,10 @@ class PlannerParams:
 @dataclass(frozen=True)
 class TargetParams:
     speed: float = 17.0            # m/s, must satisfy v_stall < speed < v_max
-    mode: str = "line"             # "line" | "circle"
+    mode: str = "line"             # "line" | "circle" | "fixed"
     circle_radius: float = 120.0   # m
+    turn_radius: float = 60.0      # m, how tightly a "line" target turns away from the border
+    wall_margin: float = 20.0      # m, the target keeps this far inside the area
 
 
 @dataclass(frozen=True)
@@ -99,6 +101,37 @@ class ApproachParams:
     d0: float = 60.0               # m, how early to start slowing down
     capture_radius: float = 60.0   # m, "caught up" once closer than this ...
     hold_time: float = 5.0         # s, ... and staying that close for this long
+
+
+@dataclass(frozen=True)
+class PursuitParams:
+    """Speed rule for the moments the target is close but not ahead (see navcore.py)."""
+
+    turn_back_cos: float = 0.5     # the target counts as "ahead" within +-60 deg of the ground track
+    turn_back_range: float = 150.0  # m, only this close does a tight turn matter
+    turn_back_factor: float = 1.2  # airspeed for turning back, times the stall speed
+
+
+@dataclass(frozen=True)
+class GuardParams:
+    """Look-ahead zone guard (safety.py): roll the turn forward, steer away if it ends in a zone."""
+
+    margin: float = 3.0            # m, act when the predicted path gets this close to a zone or the border
+    release: float = 12.0          # m, extra clearance needed before handing control back
+    horizon: float = 6.0           # s, how far ahead the turn is predicted
+    period: float = 0.1            # s, how often the check runs
+
+
+@dataclass(frozen=True)
+class FieldParams:
+    """Potential-field gains (potential.py)."""
+
+    k_rep: float = 1.0             # repulsion equals the (unit) attraction at rho = rho0 / 2
+    influence_turns: float = 2.0   # rho0 in minimum turn radii at the current airspeed (at least cruise)
+    vortex: float = 0.0            # tangential gain relative to the repulsion (0 = classic APF)
+    goal_exp: float = 0.0          # Ge & Cui exponent n (0 = classic APF)
+    wall_margin: float = 10.0      # m, the border counts as an edge this far inside the area
+    heading_gain: float = 0.8      # 1/s, commanded turn rate per rad of course error
 
 
 @dataclass(frozen=True)
@@ -133,6 +166,8 @@ class Config:
     planner: PlannerParams = field(default_factory=PlannerParams)
     target: TargetParams = field(default_factory=TargetParams)
     approach: ApproachParams = field(default_factory=ApproachParams)
+    pursuit: PursuitParams = field(default_factory=PursuitParams)
+    guard: GuardParams = field(default_factory=GuardParams)
     sensors: SensorParams = field(default_factory=SensorParams)
     wind_estimator: WindEstimatorParams = field(default_factory=WindEstimatorParams)
     sim: SimParams = field(default_factory=SimParams)

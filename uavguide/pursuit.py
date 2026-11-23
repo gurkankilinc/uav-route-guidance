@@ -1,47 +1,36 @@
-"""8.2 - closed-loop pursuit of a moving target with route replanning (or a potential field).
+"""8.2 - closed-loop pursuit of a moving target: the simulation around the navigation core.
 
-Each tick of the 50 Hz loop
+All decisions (route planning, replanning, L1 or potential-field steering, speed profile, guard)
+live in `navcore.Navigator`. This module is only the world the navigator flies in. Each tick of
+the 50 Hz loop
 
-  1. the target moves, the aircraft may detect zones inside its sensor radius,
-  2. the route is (re)planned from the current position when it is the first
-     tick, when a new zone was detected, or when `replan_interval` has passed,
-  3. the last waypoint follows the target live, so a route planned a second
-     ago still ends where the target is now. It is not the target itself but
-     the point `d_follow` behind it: aiming at the target would make the
-     aircraft fly through it and then need a 120 m loop to come back,
-  4. the L1 guidance flies the route and the speed command follows the
-     approach profile v(d) of `target.py`,
-  5. the physical (not inflated) clearance to every real zone is logged.
+  1. the target moves and the aircraft may detect zones inside its sensor radius,
+  2. the navigator gets the aircraft state, the target and the known zones, and returns a bank
+     and an airspeed command,
+  3. the vehicle model flies that command in the true wind,
+  4. the physical (not inflated) clearance to every real zone is logged.
 
-With a potential-field method (`potential.py`) steps 2-4 are replaced: there is no route, the
-field gives the course and the roll command directly; speed and guard are the same.
-
-The aircraft is "caught up" once it stays within `capture_radius` of the
-target for `hold_time` seconds.
+The aircraft is "caught up" once it stays within `capture_radius` of the target for `hold_time`
+seconds. That is a scoring rule, not a navigation decision, so it lives here.
 """
 
 from __future__ import annotations
 
 import math
-import time
+from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from .config import Config
-from .guidance import L1Guidance
-from .planner import GridMap, PlanningError
-from .planners import PLANNERS, free_point
-from .potential import FIELD_METHODS, PotentialField
-from .safety import ZoneGuard
-from .sensors import TrueGroundVelocity, VelocitySource
-from .target import MovingTarget, approach_speed
+from .navcore import METHODS, NavState, NavTarget, NavZones, Navigator, ReplanEvent
+from .sensors import AirDataOnly, NoisyGnssVelocity, TrueGroundVelocity, VelocitySource
+from .target import MovingTarget
 from .vehicle import FixedWing, VehicleState
+from .wind import WindEstimateSource
 from .world import World
 
-
-# every method the comparison can run: route planners (L1 flies the route) and potential fields (no route)
-METHODS = list(PLANNERS) + list(FIELD_METHODS)
+__all__ = ["METHODS", "PursuitScenario", "PursuitPolicy", "PursuitLog", "ReplanEvent", "pursue"]
 
 
 @dataclass(frozen=True)
@@ -57,18 +46,12 @@ class PursuitScenario:
 @dataclass(frozen=True)
 class PursuitPolicy:
     replan_interval: float | None = 1.0  # s between replans; None = plan once at the start
-    guard: bool = True                   # look-ahead zone guard (see safety.py), same for every planner
-
-
-@dataclass
-class ReplanEvent:
-    t: float
-    reason: str                # "initial" | "periodic" | "detected"; "field" = a potential-field snapshot
-                               # (route = where the field points, plan_ms = mean field time per tick)
-    ok: bool
-    route: np.ndarray
-    plan_ms: float
-    expanded: int
+    guard: bool = True                   # look-ahead zone guard (see safety.py), same for every method
+    # how far from ideal the link between the core and the aircraft is (defaults: ideal)
+    control_rate_hz: float | None = None  # how often the core runs; None = every simulation tick (50 Hz)
+    command_delay: float = 0.0           # s from computing a command to the aircraft acting on it
+    plan_latency: float = 0.0            # s a new route takes to compute; the old one is flown meanwhile
+    velocity_source: str = "true"        # "true" | "gnss" | "wind_est" | "air_only" (see make_velocity_source)
 
 
 @dataclass
@@ -89,19 +72,26 @@ class PursuitLog:
     replans: list[ReplanEvent] = field(default_factory=list)
     captured: bool = False
     capture_t: float = math.nan
+    guard_time: float = 0.0    # s the look-ahead guard was overriding the steering
 
 
-TURN_BACK_COS = 0.5      # the target counts as "ahead" within +-60 deg of the ground track
-TURN_BACK_RANGE = 150.0  # m, only this close does a tight turn matter (far away a wide one is fine)
-TURN_BACK_FACTOR = 1.2   # airspeed for turning back, times the stall speed (R = V^2 / (g tan phi))
+def make_velocity_source(name: str, cfg: Config) -> VelocitySource:
+    """Where the core's ground velocity comes from.
 
-
-def _heading_of(a, b) -> float:
-    return math.atan2(b[0] - a[0], b[1] - a[1])
-
-
-def _turn_angle_deg(a, b, c) -> float:
-    return math.degrees((_heading_of(b, c) - _heading_of(a, b) + math.pi) % (2 * math.pi) - math.pi)
+    true      exact (the reference)
+    gnss      noisy 5 Hz GNSS velocity, held between samples
+    wind_est  air data + a Kalman wind estimate fed by that GNSS velocity
+    air_only  air data only, i.e. the wind is ignored
+    """
+    if name == "true":
+        return TrueGroundVelocity()
+    if name == "gnss":
+        return NoisyGnssVelocity(cfg.sensors)
+    if name == "wind_est":
+        return WindEstimateSource(cfg.wind_estimator, cfg.sensors, cfg.vehicle.v_cruise)
+    if name == "air_only":
+        return AirDataOnly(cfg.sensors)
+    raise ValueError(f"unknown velocity source {name!r}")
 
 
 def pursue(
@@ -111,35 +101,37 @@ def pursue(
     cfg: Config | None = None,
     source: VelocitySource | None = None,
     seed: int = 0,
+    recorder=None,
 ) -> PursuitLog:
     cfg = cfg or Config()
     policy = policy or PursuitPolicy()
-    if planner not in METHODS:
-        raise ValueError(f"unknown method {planner!r}; choose from {METHODS}")
-    field_p = FIELD_METHODS.get(planner)
-    plan_fn = PLANNERS.get(planner)
-    veh, pp, app = cfg.vehicle, cfg.planner, cfg.approach
+    nav = Navigator(planner, cfg, replan_interval=policy.replan_interval, guard=policy.guard,
+                    plan_latency=policy.plan_latency)
+    if recorder is not None:
+        nav = recorder.wrap(nav)
+    veh, app = cfg.vehicle, cfg.approach
     tgt = scenario.target
     if tgt.speed and not (veh.v_stall < tgt.speed < veh.v_max):
         raise ValueError("target speed must lie between stall and maximum speed of the aircraft")
 
     rng = np.random.default_rng(seed)
-    source = source or TrueGroundVelocity()
+    source = source or make_velocity_source(policy.velocity_source, cfg)
     source.reset(rng)
 
     dt = cfg.sim.dt
+    ctl_every = 1 if policy.control_rate_hz is None else max(1, int(round(1.0 / (policy.control_rate_hz * dt))))
+    dt_ctl = ctl_every * dt
+    in_flight: deque = deque()            # commands on their way to the aircraft: (arrival time, command)
+    roll_now, speed_now = 0.0, veh.v_cruise   # what the aircraft does until the first command arrives
+    xtrack_now, guard_now = math.nan, False
     n = int(round(cfg.sim.t_max / dt)) + 1
     world = scenario.world
-    obstacles = list(world.obstacles)
-    C = np.array([(o.x, o.y) for o in obstacles], dtype=float).reshape(-1, 2)
-    R = np.array([o.r for o in obstacles], dtype=float)
-    known = np.full(len(obstacles), scenario.detect_radius is None)
+    C = np.array([(o.x, o.y) for o in world.obstacles], dtype=float).reshape(-1, 2)
+    R = np.array([o.r for o in world.obstacles], dtype=float)
+    known = np.full(len(R), scenario.detect_radius is None)
+    zones = NavZones(C[known], R[known], world.bounds)
 
     model = FixedWing(veh)
-    guid = L1Guidance(cfg.guidance, veh)
-    guard = ZoneGuard(veh, bounds=world.bounds)
-    guard_every = max(1, int(round(0.1 / cfg.sim.dt)))
-    phi_cmd_held, guard_on = 0.0, False
     s = scenario.start
     wind = np.asarray(scenario.wind, dtype=float)
 
@@ -148,117 +140,40 @@ def pursue(
     D = np.empty(n); XT = np.empty(n); CL = np.empty(n); KN = np.empty(n, dtype=int)
 
     events: list[ReplanEvent] = []
-    route: np.ndarray | None = None
-    leg = 0
-    last_plan_t = -math.inf
-    grid: GridMap | None = None
-    world_k = World(world.bounds, [])
-    need_grid = True
     hold_start: float | None = None
     captured, capture_t = False, math.nan
-    pf = PotentialField(field_p, veh, pp.safety_margin, world.bounds) if field_p else None
-    show_every = policy.replan_interval or 2.0     # how often a field snapshot is logged for display
-    f_ms, f_n = 0.0, 0
+    guard_ticks = 0
 
     k = 0
     for k in range(n):
         t = k * dt
         tp, tv = tgt.state(t)
-        pos = s.pos
-        tspeed = float(np.hypot(*tv))
-        # aim d_follow behind the target, so the aircraft joins from behind instead of flying through it
-        aim = tp - tv / tspeed * app.d_follow if tspeed > 1e-6 else tp
 
+        # sensor model: which zones does the aircraft know about?
         d_obs = np.hypot(C[:, 0] - s.x, C[:, 1] - s.y) - R if len(R) else np.empty(0)
         clearance = float(d_obs.min()) if len(R) else math.inf
-
-        reason = None
         if scenario.detect_radius is not None and len(R):
             new = (~known) & (d_obs <= scenario.detect_radius)
             if new.any():
                 known |= new
-                need_grid = True
-                reason = "detected"
+                zones = NavZones(C[known], R[known], world.bounds)
+
         vel = source.ground_velocity(t, s, wind)
+        if k % ctl_every == 0:
+            state = NavState(t=t, x=s.x, y=s.y, psi=s.psi, phi=s.phi, v=s.v, ground_vel=vel)
+            cmd = nav.update(state, NavTarget(tp, tv, speed=tgt.speed), zones, dt_ctl)
+            if cmd.event is not None:
+                events.append(cmd.event)
+            in_flight.append((t + policy.command_delay, cmd))
+        while in_flight and in_flight[0][0] <= t + 1e-9:
+            c = in_flight.popleft()[1]
+            roll_now, speed_now, xtrack_now, guard_now = c.roll, c.airspeed, c.xtrack_right, c.guard_active
+        guard_ticks += guard_now
 
-        if pf is not None:
-            # potential field: no route, the field gives the course and the roll directly
-            t0 = time.perf_counter()
-            roll_cmd = pf.roll_command(s, vel, aim, C[known], R[known])
-            f_ms += (time.perf_counter() - t0) * 1e3
-            f_n += 1
-            xtrack = math.nan
-            if reason is not None or t - last_plan_t >= show_every - 1e-9:
-                course = math.atan2(vel[0], vel[1])
-                events.append(ReplanEvent(t, "field", True, pf.streamline(pos, aim, course, C[known], R[known], v=s.v),
-                                          f_ms / max(f_n, 1), 0))
-                f_ms, f_n, last_plan_t = 0.0, 0, t
-        else:
-            if route is None:
-                reason = "initial"
-            elif reason is None and policy.replan_interval is not None \
-                    and t - last_plan_t >= policy.replan_interval - 1e-9:
-                reason = "periodic"
-
-            if need_grid:
-                world_k = World(world.bounds, [o for o, kn in zip(obstacles, known) if kn])
-                grid = GridMap(world_k, pp.grid_res, pp.safety_margin)
-                need_grid = False
-
-            goal = free_point(world_k, aim, pp.safety_margin, 1.5 * pp.grid_res)
-
-            if reason is not None:
-                begin = free_point(world_k, pos, pp.safety_margin, 1.5 * pp.grid_res)
-                try:
-                    out = plan_fn(grid, world_k, tuple(begin), tuple(goal), pp)
-                    new_route = out.route.copy()
-                    if len(new_route) < 2:                 # start and goal in the same cell
-                        new_route = np.vstack([new_route, new_route])
-                    new_route[0] = pos                     # the leg starts where the aircraft is
-                    route, leg = new_route, 0
-                    events.append(ReplanEvent(t, reason, True, route.copy(), out.plan_ms, out.expanded))
-                except PlanningError:
-                    if route is None:                      # nothing to fall back on: fly straight
-                        route, leg = np.array([pos, goal]), 0
-                    events.append(ReplanEvent(t, reason, False, route.copy(), 0.0, 0))
-                last_plan_t = t
-
-            route[-1] = goal                               # the end of the route follows the target
-            a, b = route[leg], route[leg + 1]
-            out_g = guid.update_waypoint(pos, vel, a, b, dt)
-            roll_cmd, xtrack = out_g.roll_cmd, out_g.xtrack_right
-
-        d_vec = tp - pos
-        d = float(np.hypot(*d_vec))
-        w_hat = vel - s.air_velocity()                 # wind as the guidance believes it
-        g_des = approach_speed(d, tgt.speed, veh, app)
-        v_cmd = float(np.clip(g_des - float(w_hat @ (d_vec / max(d, 1e-6))), veh.v_stall, veh.v_max))
-        if d < TURN_BACK_RANGE and float(vel @ d_vec) < TURN_BACK_COS * float(np.hypot(*vel)) * d:
-            v_cmd = min(v_cmd, TURN_BACK_FACTOR * veh.v_stall)   # target not ahead: slow down for a tight turn
-
-        phi_cmd = roll_cmd
-        if policy.guard:
-            if k % guard_every == 0:
-                phi_cmd_held, guard_on = guard(s, wind, roll_cmd, C[known], R[known])
-            if guard_on:
-                phi_cmd = phi_cmd_held
-                v_cmd = min(v_cmd, TURN_BACK_FACTOR * veh.v_stall)
-
-        T[k] = t; P[k] = pos; PSI[k] = s.psi; PHI[k] = s.phi; PHIC[k] = phi_cmd
-        V[k] = s.v; VC[k] = v_cmd; TG[k] = tp; D[k] = d; XT[k] = xtrack
+        d = float(np.hypot(*(tp - s.pos)))
+        T[k] = t; P[k] = s.pos; PSI[k] = s.psi; PHI[k] = s.phi; PHIC[k] = roll_now
+        V[k] = s.v; VC[k] = speed_now; TG[k] = tp; D[k] = d; XT[k] = xtrack_now
         CL[k] = clearance; KN[k] = int(known.sum())
-
-        # leg switching (ArduPlane style); the last leg never ends, it chases the target
-        last = len(route) - 2 if route is not None else -1
-        if pf is None and leg < last:
-            gs = float(np.hypot(*vel))
-            ab = b - a
-            ab_len = float(np.hypot(*ab))
-            along = float((pos - a) @ ab) / max(ab_len, 1e-9)
-            turn = _turn_angle_deg(a, b, route[leg + 2])
-            if float(np.hypot(*(b - pos))) <= guid.turn_distance(cfg.guidance.wp_accept_radius, turn, gs) \
-                    or along >= ab_len:
-                leg += 1
 
         if d <= app.capture_radius:
             if hold_start is None:
@@ -269,10 +184,11 @@ def pursue(
         else:
             hold_start = None
 
-        s = model.step(s, phi_cmd, v_cmd, wind, dt)
+        s = model.step(s, roll_now, speed_now, wind, dt)
 
     m = k + 1
     return PursuitLog(
         planner=planner, t=T[:m], pos=P[:m], psi=PSI[:m], phi=PHI[:m], phi_cmd=PHIC[:m],
         v=V[:m], v_cmd=VC[:m], target=TG[:m], dist=D[:m], xtrack_right=XT[:m],
-        clearance=CL[:m], known=KN[:m], replans=events, captured=captured, capture_t=capture_t)
+        clearance=CL[:m], known=KN[:m], replans=events, captured=captured, capture_t=capture_t,
+        guard_time=guard_ticks * dt)

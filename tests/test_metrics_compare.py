@@ -3,13 +3,15 @@ from dataclasses import replace
 
 import pytest
 
-from uavguide.compare import monte_carlo, run_all, summarize
+from functools import partial
+
+from uavguide.compare import mcnemar_p, monte_carlo, paired_difference, run_all, summarize, wilson_interval
 from uavguide.config import Config, SimParams
 from uavguide.metrics import Metrics, outcome, rank
 from uavguide.planners import PLANNERS
 from uavguide.pursuit import METHODS, PursuitPolicy
-from uavguide.scenarios import make_scenario, scale_zones
-from uavguide.world import default_world, random_world
+from uavguide.scenarios import TEST_SEEDS, TUNE_SEEDS, make_scenario, scale_zones
+from uavguide.world import default_world
 
 
 def fake(name, success=True, t=60.0, length=1000.0, ms=10.0, clr=20.0):
@@ -98,3 +100,69 @@ def test_outcome_names_the_worst_problem_first():
     assert outcome(rep(ok, success=False, collided=True, left_area=True)) == "collided"
     assert outcome(rep(ok, success=False, left_area=True)) == "left_area"
     assert outcome(rep(ok, success=False, captured=False)) == "not_caught"
+
+
+def test_wilson_interval_matches_known_values():
+    lo, hi = wilson_interval(16, 20)
+    assert (lo, hi) == pytest.approx((0.584, 0.919), abs=2e-3)
+    assert wilson_interval(0, 20)[0] == 0.0 and wilson_interval(20, 20)[1] == 1.0
+    wide = wilson_interval(8, 10)
+    narrow = wilson_interval(80, 100)
+    assert (wide[1] - wide[0]) > 2 * (narrow[1] - narrow[0])      # ten times the runs: much tighter
+    assert wilson_interval(0, 0) == (0.0, 1.0)
+
+
+def test_mcnemar_exact_p_values():
+    assert mcnemar_p(0, 0) == 1.0
+    assert mcnemar_p(5, 0) == pytest.approx(0.0625)
+    assert mcnemar_p(10, 0) == pytest.approx(2 / 1024)
+    assert mcnemar_p(6, 6) == 1.0
+    assert mcnemar_p(3, 9) == mcnemar_p(9, 3)
+
+
+def test_paired_difference_counts_discordant_scenarios():
+    a = [fake("a", success=s) for s in (True, True, True, True, False, True, True, True)]
+    b = [fake("b", success=s) for s in (True, False, False, True, False, False, True, False)]
+    d = paired_difference({"a": a, "b": b}, "a", "b")
+    assert d["only_a"] == 4 and d["only_b"] == 0 and d["difference"] == pytest.approx(0.5)
+    assert d["lo"] > 0.0 and d["p_value"] == pytest.approx(0.125)
+    same = paired_difference({"a": a, "b": a}, "a", "b")
+    assert same["difference"] == 0.0 and same["p_value"] == 1.0
+    with pytest.raises(ValueError):
+        paired_difference({"a": a, "b": b[:3]}, "a", "b")
+
+
+def test_summary_reports_an_interval_and_guard_share():
+    rows = {"x": [fake("x"), fake("x", success=False), fake("x"), fake("x")]}
+    s = summarize(rows)["x"]
+    assert s["success_rate"] == 0.75 and s["success_lo"] < 0.75 < s["success_hi"]
+    assert s["left_area_rate"] == 0.0 and s["guard_share"] == 0.0
+
+
+def test_parallel_monte_carlo_gives_the_same_rows():
+    cfg = replace(Config(), sim=SimParams(t_max=20.0))
+    make = partial(make_scenario, cfg=cfg)
+    one = monte_carlo(range(2), make, ["Theta*"], PursuitPolicy(2.0), cfg, processes=1)
+    two = monte_carlo(range(2), make, ["Theta*"], PursuitPolicy(2.0), cfg, processes=2)
+    strip = lambda m: {k: v for k, v in m.as_dict().items() if not k.startswith("plan_ms")}
+    for x, y in zip(one["Theta*"], two["Theta*"]):
+        assert strip(x) == pytest.approx(strip(y), nan_ok=True)
+
+
+def test_tuning_and_test_seeds_do_not_overlap():
+    assert not set(TUNE_SEEDS) & set(TEST_SEEDS)
+    assert not set(range(20)) & (set(TUNE_SEEDS) | set(TEST_SEEDS))    # the seeds v1 was developed on
+
+
+def test_default_ranking_does_not_depend_on_wall_clock_time():
+    a, b = fake("a", t=50.0, ms=1.0), fake("b", t=60.0, ms=500.0)
+    slow_a = fake("a", t=50.0, ms=900.0)
+    assert rank([a, b]) == rank([slow_a, b])
+
+
+def test_guard_share_is_measured():
+    cfg = replace(Config(), sim=SimParams(t_max=40.0))
+    sc = make_scenario(2, cfg)
+    on = run_all(sc, ["A*"], PursuitPolicy(2.0, guard=True), cfg)["A*"][1]
+    off = run_all(sc, ["A*"], PursuitPolicy(2.0, guard=False), cfg)["A*"][1]
+    assert off.guard_share == 0.0 and 0.0 <= on.guard_share <= 1.0

@@ -3,7 +3,7 @@ import math
 import numpy as np
 import pytest
 
-from uavguide.config import Config, TargetParams, VehicleParams
+from uavguide.config import TargetParams, VehicleParams
 from uavguide.metrics import compute_metrics
 from uavguide.potential import FIELD_METHODS, FieldParams, PotentialField
 from uavguide.pursuit import METHODS, PursuitPolicy, PursuitScenario, pursue

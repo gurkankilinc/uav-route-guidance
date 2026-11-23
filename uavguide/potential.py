@@ -29,21 +29,9 @@ airspeed, never less than at cruise (117 m at 20 m/s, 196 m at 26 m/s).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-
 import numpy as np
 
-from .config import G, VehicleParams
-
-
-@dataclass(frozen=True)
-class FieldParams:
-    k_rep: float = 1.0             # repulsion equals the (unit) attraction at rho = rho0 / 2
-    influence_turns: float = 2.0   # rho0 in minimum turn radii at the current airspeed (at least cruise)
-    vortex: float = 0.0            # tangential gain relative to the repulsion (0 = classic APF)
-    goal_exp: float = 0.0          # Ge & Cui exponent n (0 = classic APF)
-    wall_margin: float = 10.0      # m, the border counts as an edge this far inside the area
-    heading_gain: float = 0.8      # 1/s, commanded turn rate per rad of course error
+from .config import FieldParams, G, VehicleParams
 
 
 # gains picked on scenarios 100-119 (guard off), kept apart from the 0-19 evaluation set;

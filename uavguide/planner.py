@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .world import World
+from .world import World, points_in_polygon, points_polygon_distance
 
 SQRT2 = math.sqrt(2.0)
 _NEIGHBORS = [(di, dj, math.hypot(di, dj))
@@ -25,7 +25,11 @@ class PlanningError(RuntimeError):
 
 
 class GridMap:
-    """Boolean occupancy grid; obstacles inflated by `margin` metres."""
+    """Boolean occupancy grid; obstacles inflated by `margin` metres.
+
+    If the world has a polygon border, cells outside it, or closer than
+    `margin` to it, are occupied too, so every planner respects the border.
+    """
 
     def __init__(self, world: World, resolution: float, margin: float):
         self.res = float(resolution)
@@ -38,6 +42,10 @@ class GridMap:
         occ = np.zeros((self.nx, self.ny), dtype=bool)
         for o in world.obstacles:
             occ |= (X - o.x) ** 2 + (Y - o.y) ** 2 <= (o.r + margin) ** 2
+        if world.polygon is not None:
+            pts = np.column_stack([X.ravel(), Y.ravel()])
+            free = points_in_polygon(pts, world.polygon) & (points_polygon_distance(pts, world.polygon) >= margin)
+            occ |= ~free.reshape(self.nx, self.ny)
         self.occ = occ
 
     def to_cell(self, x: float, y: float) -> tuple[int, int]:
